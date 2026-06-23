@@ -1,0 +1,12 @@
+com\securechat\client\SecureChatClient$GroupMessageCallback.class
+com\securechat\server\ClientHandler$PacketAction.class
+com\securechat\client\MainApp$GroupItem.class
+com\securechat\shared\Packet.class
+com\securechat\client\MainApp.class
+com\securechat\client\SecureChatClient$MessageCallback.class
+com\securechat\client\MainApp$Message.class
+com\securechat\server\SecureChatServer.class
+com\securechat\client\SecureChatClient.class
+com\securechat\server\ClientHandler.class
+com\securechat\client\MainApp$ContactItem.class
+com\securechat\server\DatabaseManager.class
