@@ -26,6 +26,11 @@ public class Packet {
     public static final int MESSAGE_READ_CONFIRM = 304; 
     public static final int ERROR_MESSAGE = 305;
 
+    public static final int EDIT_MESSAGE_REQUEST = 306;
+    public static final int DELETE_MESSAGE_REQUEST = 307;
+    public static final int MESSAGE_EDITED = 308;
+    public static final int MESSAGE_DELETED = 309;
+
     // --- Команди модерації ---
     public static final int BLOCK_USER = 401;
     public static final int DISCONNECT_KICK = 402;

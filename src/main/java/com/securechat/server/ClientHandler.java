@@ -65,6 +65,8 @@ public class ClientHandler implements Runnable {
         packetHandlers.put(Packet.GET_GROUP_MEMBERS_REQUEST, this::handleGetGroupMembers);
         packetHandlers.put(Packet.TYPING_START, this::handleTypingStart);
         packetHandlers.put(Packet.TYPING_STOP, this::handleTypingStop);
+        packetHandlers.put(Packet.EDIT_MESSAGE_REQUEST, this::handleEditMessage);
+        packetHandlers.put(Packet.DELETE_MESSAGE_REQUEST, this::handleDeleteMessage);
     }
 
     @Override
@@ -645,6 +647,66 @@ public class ClientHandler implements Runnable {
 
     private void handleTypingStart(byte[] payload) throws IOException { handleTypingEvent(payload, Packet.TYPING_START); }
     private void handleTypingStop(byte[] payload) throws IOException { handleTypingEvent(payload, Packet.TYPING_STOP); }
+
+    private void handleEditMessage(byte[] payload) throws IOException {
+        if (this.userId == null) return;
+        String[] parts = new String(payload, StandardCharsets.UTF_8).split(":", 4);
+        if (parts.length == 4) {
+            boolean isGroup = Boolean.parseBoolean(parts[0]);
+            int targetId = Integer.parseInt(parts[1]); 
+            String oldText = parts[2];
+            String newText = parts[3];
+            
+            if (DatabaseManager.editMessage(this.userId, oldText, newText, isGroup)) {
+                // Якщо приватний чат - отримувач має бачити ID відправника, а не свій
+                int partnerIdForReceiver = isGroup ? targetId : this.userId;
+                String broadcastData = isGroup + ":" + partnerIdForReceiver + ":" + oldText + ":" + newText;
+                byte[] broadcastPayload = broadcastData.getBytes(StandardCharsets.UTF_8);
+                
+                if (isGroup) {
+                    for (Integer memberId : DatabaseManager.getGroupMembers(targetId)) {
+                        if (!memberId.equals(this.userId)) {
+                            ClientHandler h = activeClients.get(memberId);
+                            if (h != null) h.sendPacket(Packet.MESSAGE_EDITED, broadcastPayload);
+                        }
+                    }
+                } else {
+                    ClientHandler h = activeClients.get(targetId);
+                    if (h != null) h.sendPacket(Packet.MESSAGE_EDITED, broadcastPayload);
+                }
+            }
+        }
+    }
+
+    private void handleDeleteMessage(byte[] payload) throws IOException {
+        if (this.userId == null) return;
+        String[] parts = new String(payload, StandardCharsets.UTF_8).split(":", 4);
+        if (parts.length == 4) {
+            boolean isGroup = Boolean.parseBoolean(parts[0]);
+            int targetId = Integer.parseInt(parts[1]);
+            String oldText = parts[2];
+            String deletedEncryptedText = parts[3]; // Отримуємо зашифроване [DELETED]
+            
+            // Передаємо deletedEncryptedText в БД
+            if (DatabaseManager.deleteMessage(this.userId, oldText, deletedEncryptedText, isGroup)) {
+                int partnerIdForReceiver = isGroup ? targetId : this.userId;
+                String broadcastData = isGroup + ":" + partnerIdForReceiver + ":" + oldText;
+                byte[] broadcastPayload = broadcastData.getBytes(StandardCharsets.UTF_8);
+                
+                if (isGroup) {
+                    for (Integer memberId : DatabaseManager.getGroupMembers(targetId)) {
+                        if (!memberId.equals(this.userId)) {
+                            ClientHandler h = activeClients.get(memberId);
+                            if (h != null) h.sendPacket(Packet.MESSAGE_DELETED, broadcastPayload);
+                        }
+                    }
+                } else {
+                    ClientHandler h = activeClients.get(targetId);
+                    if (h != null) h.sendPacket(Packet.MESSAGE_DELETED, broadcastPayload);
+                }
+            }
+        }
+    }
 
     public long getLastHeartbeat() {
         return lastHeartbeat;

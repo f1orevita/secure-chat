@@ -1,5 +1,7 @@
 package com.securechat.client;
 
+import com.securechat.client.SecureChatClient.GroupMessageCallback;
+import com.securechat.client.SecureChatClient.MessageCallback;
 import com.securechat.shared.Packet;
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
@@ -60,14 +62,17 @@ public class SecureChatClient {
     private Consumer<String> onGroupMembersReceived;
     private Consumer<String> onTypingStartReceived;
     private Consumer<String> onTypingStopReceived;
+    public Consumer<String> onMessageEditedReceived;
+    public Consumer<String> onMessageDeletedReceived;
     
     private final List<String> historyBuffer = new ArrayList<>();
 
-    public void setCallbacks(BiConsumer<Integer, String> onLogin, MessageCallback onMsg, Consumer<String> onContacts, 
+    public void setCallbacks(BiConsumer<Integer, String> onLogin, MessageCallback onMsg, Consumer<String> onContacts,
                              Consumer<Integer> onUserChecked, Consumer<Integer> onMessagesRead, Consumer<String> onStats,
                              Consumer<String> onError, Consumer<String> onBlocklist,
                              Consumer<String> onGroups, GroupMessageCallback onGroupMsg, Consumer<String> onGroupMembers,
-                             Consumer<String> onTypingStart, Consumer<String> onTypingStop) {
+                             Consumer<String> onTypingStart, Consumer<String> onTypingStop,
+                             Consumer<String> onMessageEdited, Consumer<String> onMessageDeleted) {
         this.onLoginSuccess = onLogin;
         this.onMessageReceived = onMsg;
         this.onContactsReceived = onContacts;
@@ -81,6 +86,8 @@ public class SecureChatClient {
         this.onGroupMembersReceived = onGroupMembers;
         this.onTypingStartReceived = onTypingStart;
         this.onTypingStopReceived = onTypingStop;
+        this.onMessageEditedReceived = onMessageEdited;
+        this.onMessageDeletedReceived = onMessageDeleted;
     }
 
     public String getUsername(int id) {
@@ -230,6 +237,12 @@ public class SecureChatClient {
                 break;
             case Packet.TYPING_START: if (onTypingStartReceived != null) Platform.runLater(() -> onTypingStartReceived.accept(data)); break;
             case Packet.TYPING_STOP:  if (onTypingStopReceived != null) Platform.runLater(() -> onTypingStopReceived.accept(data)); break;
+            case Packet.MESSAGE_EDITED:
+                if (onMessageEditedReceived != null) Platform.runLater(() -> onMessageEditedReceived.accept(data));
+                break;
+            case Packet.MESSAGE_DELETED:
+                if (onMessageDeletedReceived != null) Platform.runLater(() -> onMessageDeletedReceived.accept(data));
+                break;
         }
     }
 

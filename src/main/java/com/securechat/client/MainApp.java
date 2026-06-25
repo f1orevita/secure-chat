@@ -1,7 +1,8 @@
 package com.securechat.client;
 
+import com.securechat.client.MainApp.ContactItem;
+import com.securechat.client.MainApp.GroupItem;
 import com.securechat.shared.Packet;
-
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
@@ -18,6 +19,9 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.layout.Region;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -91,6 +95,13 @@ public class MainApp extends Application {
     @Override
     public void start(Stage primaryStage) {
         this.primaryStage = primaryStage;
+        // --- ВСТАНОВЛЕННЯ ІКОНКИ ДОДАТКУ ---
+        try {
+            java.net.URL iconUrl = getClass().getResource("/icon.png");
+            if (iconUrl != null) {
+                primaryStage.getIcons().add(new javafx.scene.image.Image(iconUrl.toExternalForm()));
+            }
+        } catch (Exception ignored) {}
         this.client = new SecureChatClient();
         
         if (!client.connect()) {
@@ -102,13 +113,12 @@ public class MainApp extends Application {
         showLoginWindow();
     }
 
-    // Централізований метод налаштування всіх 10 колбеків
     private void setupClientCallbacks() {
         client.setCallbacks(
-            this::showChatWindow, 
-            this::handleIncomingPrivateMessage, 
+            this::showChatWindow,
+            this::handleIncomingPrivateMessage,
             this::updateContacts,
-            targetId -> { 
+            targetId -> {
                 openPrivateChat(targetId);
                 contactsList.getSelectionModel().clearSelection();
                 groupsList.getSelectionModel().clearSelection();
@@ -164,6 +174,43 @@ public class MainApp extends Application {
                         updateTypingLabel();
                     }
                 }
+            },
+            // 14-й параметр: Редагування повідомлення
+            data -> {
+                String[] parts = data.split(":", 4);
+                boolean isGroup = Boolean.parseBoolean(parts[0]);
+                int chatId = Integer.parseInt(parts[1]);
+                String oldDecrypted = client.decrypt(parts[2]);
+                String newDecrypted = client.decrypt(parts[3]);
+                
+                List<Message> history = isGroup ? groupHistories.get(chatId) : privateHistories.get(chatId);
+                if (history != null) {
+                    for (int i = history.size() - 1; i >= 0; i--) {
+                        if (history.get(i).text.equals(oldDecrypted)) {
+                            history.get(i).text = newDecrypted;
+                            break;
+                        }
+                    }
+                }
+                if (currentChatId != null && currentChatId == chatId && isCurrentChatGroup == isGroup) refreshChatView();
+            },
+            // 15-й параметр: Видалення повідомлення
+            data -> {
+                String[] parts = data.split(":", 3);
+                boolean isGroup = Boolean.parseBoolean(parts[0]);
+                int chatId = Integer.parseInt(parts[1]);
+                String oldDecrypted = client.decrypt(parts[2]);
+                
+                List<Message> history = isGroup ? groupHistories.get(chatId) : privateHistories.get(chatId);
+                if (history != null) {
+                    for (int i = history.size() - 1; i >= 0; i--) {
+                        if (history.get(i).text.equals(oldDecrypted)) {
+                            history.get(i).text = "[DELETED]"; // ЗМІНЕНО: Замість remove ставимо маркер
+                            break;
+                        }
+                    }
+                }
+                if (currentChatId != null && currentChatId == chatId && isCurrentChatGroup == isGroup) refreshChatView();
             }
         );
     }
@@ -273,7 +320,7 @@ public class MainApp extends Application {
         Button createGroupBtn = new Button("➕ Створити групу");
         createGroupBtn.setMaxWidth(Double.MAX_VALUE);
         createGroupBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #dcddde; -fx-border-color: #72767d; -fx-cursor: hand;");
-        createGroupBtn.setOnAction(e -> askForInput("Введіть назву нової групи:", name -> client.sendPacket(Packet.CREATE_GROUP_REQUEST, name)));
+        createGroupBtn.setOnAction(e -> askForInput("Введіть назву нової групи:", "", name -> client.sendPacket(Packet.CREATE_GROUP_REQUEST, name)));
         
         groupsSection.getChildren().addAll(groupsLabel, groupsList, createGroupBtn);
 
@@ -346,7 +393,7 @@ public class MainApp extends Application {
         addMemberBtn = new Button("👤+ Додати учасника");
         addMemberBtn.setStyle("-fx-background-color: #3ba55c; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand;");
         addMemberBtn.setVisible(false); // Ховаємо за замовчуванням
-        addMemberBtn.setOnAction(e -> askForInput("Введіть Username для додавання в групу:", username -> {
+        addMemberBtn.setOnAction(e -> askForInput("Введіть Username для додавання в групу:", "", username -> {
             if (currentChatId != null) client.sendPacket(Packet.ADD_MEMBER_TO_GROUP, currentChatId + ":" + username);
         }));
 
@@ -429,7 +476,44 @@ public class MainApp extends Application {
         };
         messageField.setOnAction(e -> sendMessageAction.run());
 
-        inputPanel.getChildren().add(messageField);
+        // --- КНОПКА ВІДПРАВКИ КАРТИНКИ ---
+        Button attachBtn = new Button("📎");
+        attachBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #dcddde; -fx-font-size: 18px; -fx-cursor: hand;");
+        attachBtn.setOnAction(e -> {
+            javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+            fileChooser.setTitle("Оберіть картинку");
+            fileChooser.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("Зображення", "*.png", "*.jpg", "*.jpeg"));
+            
+            java.io.File selectedFile = fileChooser.showOpenDialog(primaryStage);
+            if (selectedFile != null) {
+                try {
+                    byte[] fileContent = java.nio.file.Files.readAllBytes(selectedFile.toPath());
+                    if (fileContent.length > 2 * 1024 * 1024) { // Ліміт 2 МБ, щоб не лягла пам'ять
+                        // ВИПРАВЛЕНО: Прибрали зайвий параметр "Увага"
+                        new Alert(Alert.AlertType.WARNING, "Файл занадто великий! Максимум 2 МБ.").showAndWait();
+                        return;
+                    }
+                    String base64Image = java.util.Base64.getEncoder().encodeToString(fileContent);
+                    String imagePayload = "[IMG]:" + base64Image;
+                    
+                    if (currentChatId != null) {
+                        if (isCurrentChatGroup) {
+                            handleIncomingGroupMessage(currentChatId, myUserId, "Ви", imagePayload);
+                            client.sendPacket(Packet.SEND_GROUP_MESSAGE, currentChatId + ":" + client.encrypt(imagePayload));
+                        } else {
+                            handleIncomingPrivateMessage(currentChatId, myUserId, imagePayload, false);
+                            client.sendPacket(Packet.SEND_MESSAGE, currentChatId + ":" + client.encrypt(imagePayload));
+                        }
+                    }
+                } catch (Exception ex) {
+                    // ВИПРАВЛЕНО: Прибрали зайвий параметр "Помилка"
+                    new Alert(Alert.AlertType.ERROR, "Не вдалося завантажити картинку").showAndWait();
+                }
+            }
+        });
+
+        // Додаємо скріпку і поле вводу на панель
+        inputPanel.getChildren().addAll(attachBtn, messageField);
         activeChatState.getChildren().addAll(chatHeader, chatScrollPane, typingLabel, inputPanel);
         
         centerStack.getChildren().addAll(emptyChatState, activeChatState);
@@ -523,20 +607,113 @@ public class MainApp extends Application {
         HBox textAndStatus = new HBox(5);
         textAndStatus.setAlignment(Pos.BOTTOM_LEFT);
 
-        Label textLabel = new Label(msg.text);
-        textLabel.setTextFill(Color.web(TEXT_NORMAL));
-        textLabel.setFont(Font.font("Arial", 14));
-        textLabel.setWrapText(true);
-        textAndStatus.getChildren().add(textLabel);
+        boolean isEdited = false;
+        boolean isDeleted = false;
+        String displayText = msg.text;
 
-        if (msg.senderId == myUserId && !isCurrentChatGroup) {
+        if (displayText != null && displayText.equals("[DELETED]")) {
+            isDeleted = true;
+            displayText = "🚫 Це повідомлення було видалено";
+        } else if (displayText != null && displayText.startsWith("[EDITED]")) {
+            isEdited = true;
+            displayText = displayText.substring(8);
+        }
+
+        // ПЕРЕВІРКА НА КАРТИНКУ
+        boolean isImage = displayText != null && !isDeleted && displayText.startsWith("[IMG]:");
+
+        if (isImage) {
+            try {
+                String base64Data = displayText.substring(6);
+                byte[] imageBytes = java.util.Base64.getDecoder().decode(base64Data);
+                javafx.scene.image.Image img = new javafx.scene.image.Image(new java.io.ByteArrayInputStream(imageBytes));
+                javafx.scene.image.ImageView imageView = new javafx.scene.image.ImageView(img);
+                imageView.setFitWidth(200); // Компактний розмір у чаті
+                imageView.setPreserveRatio(true);
+                textAndStatus.getChildren().add(imageView);
+            } catch (Exception e) {
+                Label errorLabel = new Label("[Пошкоджене зображення]");
+                errorLabel.setTextFill(Color.web("#ed4245"));
+                textAndStatus.getChildren().add(errorLabel);
+            }
+        } else {
+            Label textLabel = new Label(displayText);
+            textLabel.setTextFill(isDeleted ? Color.web("#72767d") : Color.web(TEXT_NORMAL));
+            textLabel.setFont(Font.font("Arial", isDeleted ? FontPosture.ITALIC : FontPosture.REGULAR, 14));
+            textLabel.setWrapText(true);
+            textAndStatus.getChildren().add(textLabel);
+        }
+
+        if (isEdited && !isDeleted && !isImage) {
+            Label editedLabel = new Label("(редаговано)");
+            editedLabel.setTextFill(Color.web("#72767d"));
+            editedLabel.setFont(Font.font("Arial", FontPosture.ITALIC, 10));
+            editedLabel.setPadding(new Insets(0, 0, 2, 5));
+            textAndStatus.getChildren().add(editedLabel);
+        }
+
+        if (msg.senderId == myUserId && !isCurrentChatGroup && !isDeleted) {
             Label statusLabel = new Label(msg.isRead ? "✔✔" : "✔");
             statusLabel.setTextFill(msg.isRead ? Color.web("#3ba55c") : Color.web("#72767d"));
             statusLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
+            statusLabel.setPadding(new Insets(0, 0, 0, 5));
             textAndStatus.getChildren().add(statusLabel);
         }
         
         bubble.getChildren().addAll(authorLabel, textAndStatus);
+
+        if (msg.senderId == myUserId && !isDeleted) {
+            bubble.setStyle("-fx-padding: 5px; -fx-background-color: rgba(255, 255, 255, 0.03); -fx-background-radius: 5px; -fx-cursor: hand;");
+            bubble.setOnMouseEntered(e -> bubble.setStyle("-fx-padding: 5px; -fx-background-color: rgba(255, 255, 255, 0.08); -fx-background-radius: 5px; -fx-cursor: hand;"));
+            bubble.setOnMouseExited(e -> bubble.setStyle("-fx-padding: 5px; -fx-background-color: rgba(255, 255, 255, 0.03); -fx-background-radius: 5px; -fx-cursor: hand;"));
+
+            // --- СТИЛЬНЕ ТЕМНЕ МЕНЮ ---
+            ContextMenu contextMenu = new ContextMenu();
+            contextMenu.setStyle("-fx-background-color: #2f3136; -fx-border-color: #202225; -fx-border-radius: 4px; -fx-background-radius: 4px;");
+
+            // Використовуємо кастомні лейбли, щоб гарантувати правильний колір тексту
+            Label editLbl = new Label("✏️ Редагувати");
+            editLbl.setTextFill(Color.web("#dcddde"));
+            MenuItem editItem = new MenuItem("", editLbl);
+
+            Label deleteLbl = new Label("🗑️ Видалити");
+            deleteLbl.setTextFill(Color.web("#ed4245"));
+            MenuItem deleteItem = new MenuItem("", deleteLbl);
+
+            final String finalDisplayText = displayText;
+
+            editItem.setOnAction(e -> {
+                // ПЕРЕДАЄМО СТАРИЙ ТЕКСТ У ВІКНО ВВОДУ
+                askForInput("Редагувати повідомлення:", finalDisplayText, newText -> {
+                    if (newText.trim().isEmpty() || newText.equals(finalDisplayText)) return;
+                    String newRaw = "[EDITED]" + newText;
+                    String payload = isCurrentChatGroup + ":" + currentChatId + ":" + client.encrypt(msg.text) + ":" + client.encrypt(newRaw);
+                    client.sendPacket(Packet.EDIT_MESSAGE_REQUEST, payload);
+                    msg.text = newRaw; 
+                    refreshChatView();
+                });
+            });
+
+            deleteItem.setOnAction(e -> {
+                String payload = isCurrentChatGroup + ":" + currentChatId + ":" + client.encrypt(msg.text) + ":" + client.encrypt("[DELETED]");
+                client.sendPacket(Packet.DELETE_MESSAGE_REQUEST, payload);
+                msg.text = "[DELETED]";
+                refreshChatView();
+            });
+
+            if (!isImage) {
+                contextMenu.getItems().add(editItem);
+            }
+            contextMenu.getItems().add(deleteItem);
+            
+            bubble.setOnMouseClicked(e -> {
+                if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) {
+                    contextMenu.show(bubble, e.getScreenX(), e.getScreenY());
+                } else if (contextMenu.isShowing()) {
+                    contextMenu.hide();
+                }
+            });
+        }
         messagesContainer.getChildren().add(bubble);
     }
 
@@ -583,7 +760,8 @@ public class MainApp extends Application {
 
     // --- ДІАЛОГИ ---
     private void showSettingsDialog() {
-        Dialog<Void> dialog = new Dialog<>();
+        Stage dialog = new Stage();
+        dialog.initModality(javafx.stage.Modality.APPLICATION_MODAL);
         dialog.setTitle("Налаштування профілю");
         VBox root = new VBox(20); root.setPadding(new Insets(20)); root.setStyle("-fx-background-color: " + BG_SIDEBAR + ";");
 
@@ -609,11 +787,11 @@ public class MainApp extends Application {
         deleteBox.getChildren().addAll(l2, pwdField2, deleteBtn);
 
         root.getChildren().addAll(changeLoginBox, deleteBox);
-        dialog.getDialogPane().setContent(root); dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE); dialog.showAndWait();
+        dialog.setScene(new Scene(root)); dialog.showAndWait();
     }
 
     private void showAdminStatsDialog(String statsData) {
-        Dialog<Void> dialog = new Dialog<>(); dialog.setTitle("Панель Адміністратора");
+        Stage dialog = new Stage(); dialog.initModality(javafx.stage.Modality.APPLICATION_MODAL); dialog.setTitle("Панель Адміністратора");
         VBox root = new VBox(20); root.setPadding(new Insets(20)); root.setStyle("-fx-background-color: " + BG_SIDEBAR + ";");
 
         String[] stats = statsData.split(":");
@@ -629,11 +807,12 @@ public class MainApp extends Application {
         banBox.getChildren().addAll(l4, banIdField, banBtn);
 
         root.getChildren().addAll(l1, l2, l3, banBox);
-        dialog.getDialogPane().setContent(root); dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE); dialog.showAndWait();
+        dialog.setScene(new Scene(root)); dialog.showAndWait();
     }
 
     private void showUserSearchDialog() {
-        Dialog<Void> dialog = new Dialog<>();
+        Stage dialog = new Stage();
+        dialog.initModality(javafx.stage.Modality.APPLICATION_MODAL);
         dialog.setTitle("Пошук користувача");
         VBox root = new VBox(15); root.setPadding(new Insets(20)); root.setStyle("-fx-background-color: " + BG_SIDEBAR + ";"); root.setPrefWidth(300);
 
@@ -690,11 +869,65 @@ public class MainApp extends Application {
         });
 
         root.getChildren().addAll(searchBox, profileBox);
-        dialog.getDialogPane().setContent(root); dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE); dialog.showAndWait();
+        dialog.setScene(new Scene(root)); dialog.showAndWait();
     }
 
-    private void askForInput(String title, Consumer<String> action) {
-        TextInputDialog dialog = new TextInputDialog(); dialog.setHeaderText(title); dialog.showAndWait().ifPresent(action);
+    private void askForInput(String title, String defaultValue, Consumer<String> action) {
+        Stage dialog = new Stage();
+        dialog.initModality(javafx.stage.Modality.APPLICATION_MODAL);
+        dialog.setTitle(title);
+
+        VBox root = new VBox(15);
+        root.setPadding(new Insets(20));
+        root.setStyle("-fx-background-color: " + BG_SIDEBAR + ";");
+        root.setAlignment(Pos.CENTER_LEFT);
+
+        Label titleLabel = new Label(title);
+        titleLabel.setTextFill(Color.WHITE);
+        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+
+        TextField inputField = new TextField(defaultValue);
+        inputField.setStyle("-fx-background-color: " + BG_INPUT + "; -fx-text-fill: " + TEXT_NORMAL + "; -fx-background-radius: 4px; -fx-padding: 8px;");
+        inputField.setPrefWidth(300);
+
+        // Обробка натискання Enter
+        inputField.setOnAction(e -> {
+            if (!inputField.getText().trim().isEmpty()) {
+                action.accept(inputField.getText());
+                dialog.close();
+            }
+        });
+
+        HBox buttonsBox = new HBox(10);
+        buttonsBox.setAlignment(Pos.CENTER_RIGHT);
+
+        Button cancelBtn = new Button("Скасувати");
+        cancelBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #dcddde; -fx-cursor: hand;");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        Button okBtn = new Button("ОК");
+        okBtn.setStyle("-fx-background-color: " + BRAND_BLUE + "; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; -fx-background-radius: 4px;");
+        okBtn.setOnAction(e -> {
+            if (!inputField.getText().trim().isEmpty()) {
+                action.accept(inputField.getText());
+                dialog.close();
+            }
+        });
+
+        buttonsBox.getChildren().addAll(cancelBtn, okBtn);
+        root.getChildren().addAll(titleLabel, inputField, buttonsBox);
+
+        dialog.setScene(new Scene(root));
+        
+        // Щоб фокус одразу був на полі вводу, і старий текст виділявся
+        dialog.setOnShown(e -> {
+            inputField.requestFocus();
+            if (!defaultValue.isEmpty()) {
+                inputField.selectAll();
+            }
+        });
+        
+        dialog.showAndWait();
     }
 
     public static void main(String[] args) { launch(args); }

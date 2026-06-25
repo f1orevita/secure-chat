@@ -636,4 +636,27 @@ public class DatabaseManager {
             pstmt.executeUpdate();
         } catch (SQLException e) {}
     }
+
+    // --- РЕДАГУВАННЯ ТА ВИДАЛЕННЯ ПОВІДОМЛЕНЬ ---
+    public static boolean editMessage(int senderId, String oldEncryptedText, String newEncryptedText, boolean isGroup) {
+        String table = isGroup ? "group_messages" : "messages";
+        String sql = "UPDATE " + table + " SET encrypted_content = ? WHERE id = (SELECT id FROM " + table + " WHERE sender_id = ? AND encrypted_content = ? ORDER BY id DESC LIMIT 1)";
+        try (Connection conn = getConnection(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, newEncryptedText);
+            pstmt.setInt(2, senderId);
+            pstmt.setString(3, oldEncryptedText);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) { return false; }
+    }
+
+    public static boolean deleteMessage(int senderId, String encryptedText, String deletedEncryptedText, boolean isGroup) {
+        String table = isGroup ? "group_messages" : "messages";
+        String sql = "UPDATE " + table + " SET encrypted_content = ? WHERE id = (SELECT id FROM " + table + " WHERE sender_id = ? AND encrypted_content = ? ORDER BY id DESC LIMIT 1)";
+        try (Connection conn = getConnection(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, deletedEncryptedText);
+            pstmt.setInt(2, senderId);
+            pstmt.setString(3, encryptedText);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) { return false; }
+    }
 }
